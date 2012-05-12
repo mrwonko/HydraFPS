@@ -25,6 +25,20 @@ set(LIBRARIES
 	${OPENGL_glu_LIBRARY}
 	)
 
+# add Bullet
+if (NOT BULLET_ROOT)
+	set(BULLET_ROOT $ENV{BULLET_ROOT})
+endif (NOT BULLET_ROOT)
+find_package(Bullet)
+if(NOT BULLET_FOUND)
+	message(FATAL_ERROR "Could not find Bullet Physics - try setting BULLET_ROOT")
+endif(NOT BULLET_FOUND)
+set(LIBRARIES
+	${LIBRARIES}
+	${BULLET_DYNAMICS_LIBRARY}
+	${BULLET_COLLISION_LIBRARY}
+	)
+
 # add SFML
 find_package(SFML 2 REQUIRED system window graphics audio)
 include_directories("${SFML_INCLUDE_DIR}")
