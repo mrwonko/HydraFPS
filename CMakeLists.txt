@@ -39,7 +39,16 @@ set(LIBRARIES
 	${BULLET_COLLISION_LIBRARY}
 	)
 
+# add Sixense SDK
+find_package(Sixense REQUIRED)
+include_directories(${SIXENSE_INCLUDE_DIR})
+set(LIBRARIES
+	${LIBRARIES}
+	${SIXENSE_LIBRARY_STATIC}
+	)
+
 # add SFML
+set(SFML_STATIC_LIBRARIES TRUE)
 find_package(SFML 2 REQUIRED system window graphics audio)
 include_directories("${SFML_INCLUDE_DIR}")
 add_definitions(-DSFML_DYNAMIC) # this may be outdated? there's SFML_STATIC, this may be assumed otherwise...
