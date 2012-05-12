@@ -1,0 +1,9 @@
+*.layout
+*.html
+*.cbp
+*.dll
+*.exe
+CMakeFiles
+CMakeCache.txt
+Makefile
+cmake_install.cmake
