@@ -4,6 +4,8 @@
 #include <iostream>
 #include <cassert>
 
+#include <LevelFormat.hpp> //temporary, to see if it compiles
+
 // Making sure Sixense exits properly, even when exceptions happen. (Not sure about exit() though...)
 class SixenseAutoExit
 {

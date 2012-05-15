@@ -76,8 +76,10 @@ endif(${CMAKE_BUILD_TYPE} MATCHES Debug)
 include_directories("include")
 set(SRC_FILES
 	"src/main.cpp"
+	"src/LevelFormat.cpp"
 	)
 set(INCLUDE_FILES
+	"include/LevelFormat.hpp"
 	)
 set(ALL_FILES ${SRC_FILES} ${INCLUDE_FILES})
 
