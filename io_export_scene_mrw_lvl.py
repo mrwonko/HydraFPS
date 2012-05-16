@@ -4,13 +4,19 @@ bl_info = {
     "version": (0, 0, 1),
     "blender": (2, 6, 3),
     "location": "File > Export > HydraFPW level",
-    "description": "Export HydraFPS level file. Caution: Faces with no material won't be exported!",
+    "description": "Export HydraFPS level file. Caution: Faces with no material won't be exported! Set game engine physics type to \"No Collision\" for nonsolid objects and disable their rendering for them to be invisible.",
     "category": "Import-Export"}
 
-import bpy
+import bpy, mathutils
 
-VERSION = 0
+VERSION = 1
 IDENT = "HFPSLVL\0"
+
+class SurfaceFlags:
+    Solid = 1 << 0
+    Invisible = 1 << 1
+    
+USHRT_MAX = 65535
 
 matrixFormat = "[[{mat[0][0]}, {mat[0][1]}, {mat[0][2]}, {mat[0][3]}], "
 matrixFormat += "[{mat[1][0]}, {mat[1][1]}, {mat[1][2]}, {mat[1][3]}], "
@@ -56,9 +62,39 @@ class Entity:
         file.write(entityEnd.encode())
         return True
 
+class Vertex:
+    # co: mathutils.Vector (3d)
+    # uv: pair
+    def __init__(self, co, uv):
+        self.co = co
+        self.uv = uv
+    
+    def writeToFile(self, file):
+        import struct
+        file.write(struct.pack("5f", self.co[0], self.co[1], self.co[2], self.uv[0], self.uv[1]))
+
+class Surface:
+    # verts: list of Vertex
+    # tris: list of vertexIndex (number)
+    def __init__(self, verts, tris, material, flags = SurfaceFlags.Solid):
+        self.verts = verts
+        self.tris = tris
+        self.material = material
+        self.flags = flags
+    
+    def writeToFile(self, file):
+        import struct
+        # if the type of numVertices/numTriangles changes, changes to LevelExporter.readMesh will be required as well (limit check)
+        file.write(struct.pack("64sI2H", self.material, self.flags, len(self.verts), len(self.tris)))
+        for vert in self.verts:
+            vert.writeToFile(file)
+        for tri in self.tris:
+            file.write(struct.pack("3H", tri[0], tri[1], tri[2]))
+
 class LevelExporter:
     def __init__(self, errorFunc):
         self.reportError = errorFunc
+        self.invNonsolidWarned = set() # objects that are both invisible and nonsolid - so we only warn once
         
     def export(self, filename):
         # We work on layer 0
@@ -77,7 +113,7 @@ class LevelExporter:
         
     def readObjects(self):
         self.entities = []
-        self.geometryObjectsByMaterial = {}
+        self.surfacesByMaterial = {}
         # go through all objects in the scene
         for obj in bpy.context.scene.objects:
             # objects with a custom property "classname" are entities
@@ -113,7 +149,7 @@ class LevelExporter:
         obj.layers[0] = True
         obj.select = True
         
-        # create duplicate (works by selection (no, does not?))
+        # create duplicate (works by selection (no, does not? I get context errors if I don't set the active object))
         bpy.context.scene.objects.active = obj
         bpy.ops.object.duplicate()
         dupObj = bpy.context.active_object
@@ -130,10 +166,12 @@ class LevelExporter:
         
         # enter edit mode
         bpy.ops.object.editmode_toggle()
-        mesh = obj.data
         
         # Enter face selection mode
         bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+        
+        # unhide all
+        bpy.ops.mesh.reveal()
         
         # triangulate
         bpy.ops.mesh.select_all(action='SELECT')
@@ -168,11 +206,78 @@ class LevelExporter:
         bpy.ops.object.editmode_toggle()
         bpy.ops.object.delete()
         
-        for obj in newObjs:
-            print("Created new object {}.".format(obj.name))
-        
         # process new material separated objects (newObjs)
-        #todo
+        success = True # we'll process all objects even in case of failure so no separate deletion is necessary
+        for newObj in newObjs:
+            mesh = newObj.data
+            # only export meshes with faces
+            if len(mesh.polygons) > 0:
+                # all faces got the same material - but which one?
+                material = newObj.material_slots[mesh.polygons[0].material_index]
+                if not self.readMesh(obj, mesh, material.name): #using the original object here so we have access to the original name
+                    success = False
+            # okay, we're done - delete the object
+            newObj.select = True
+            bpy.context.scene.objects.active = newObj
+            bpy.ops.object.delete()
+        
+        return success
+    
+    def readMesh(self, obj, mesh, materialName):
+        # make sure there's a uv map
+        if len(mesh.uv_layers) == 0:
+            self.reportError("Mesh of object \"{}\" has no UV map!".format(mesh.name))
+            return False
+        uv_layer = mesh.uv_layers[0]
+        uv_loops = uv_layer.data
+        if len(uv_loops) == 0:
+            self.reportError("Mesh of object \"{}\" has no UV map!".format(mesh.name))
+            return False
+        
+        # a single vertex may have multiple uv coordinates (since they're per face)
+        # I need to export that as multiple vertices, so I use this:
+        # { blender vertex index : [ blender uv loop index ] }
+        exportIndexLookup = {}
+        verts = []
+        # also adds the vertex to verts, if necessary
+        def getExportIndex(vertexIndex, loopIndex):
+            uv = uv_loops[loopIndex].uv.to_tuple()
+            indices = exportIndexLookup.get(vertexIndex)
+            if not indices:
+                exportIndexLookup[vertexIndex] = indices = {}
+            index = indices.get(uv)
+            if not index:
+                verts.append(Vertex(mesh.vertices[vertexIndex].co, uv))
+                index = len(verts) - 1
+                indices[uv] = index
+            return index
+        
+        # the polys may get new vertex indices due to vertex splitting due to different UVs - this is all done by this beautiful list comprehension.
+        tris = [ [ getExportIndex(vertIndex, loopIndex) for vertIndex, loopIndex in zip(poly.vertices, poly.loop_indices) ] for poly in mesh.polygons ]
+        
+        # make sure we're not exceeding limits
+        if len(verts) > USHRT_MAX or len(tris) > USHRT_MAX:
+            reportError("After applying modifiers, triangulating and splitting at UV seams, the mesh of \"{}\" has more than 65535 triangles or vertices of the same material!".format(obj.name))
+            return False
+        
+        # generate surface flags based on object settings
+        flags = 0
+        if obj.game.physics_type != 'NO_COLLISION':
+            flags |= SurfaceFlags.Solid
+        if obj.hide_render:
+            flags |= SurfaceFlags.Invisible
+        
+        # warn about nonsensical invisible & nonsolid combination - but only once per object
+        if flags & SurfaceFlags.Invisible and ~flags & SurfaceFlags.Solid:
+            if obj.name not in self.invNonsolidWarned:
+                self.invNonsolidWarned |= {obj.name}
+                print("Warning: invisible nonsolid object \"{}\"!".format(obj.name))
+        
+        # append surface to list of surfaces with this material (for potential combination)
+        surfs = self.surfacesByMaterial.get(materialName)
+        if not surfs:
+            surfs = self.surfacesByMaterial[materialName] = []
+        surfs.append(Surface(verts, tris, materialName, flags))
         
         return True
     
