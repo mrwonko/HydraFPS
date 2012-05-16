@@ -78,8 +78,8 @@ class LevelExporter:
     def readObjects(self):
         self.entities = []
         self.geometryObjectsByMaterial = {}
-        # go through all objects
-        for obj in bpy.data.objects:
+        # go through all objects in the scene
+        for obj in bpy.context.scene.objects:
             # objects with a custom property "classname" are entities
             if "classname" in obj:
                 if not self.readEntity(obj):
@@ -101,6 +101,8 @@ class LevelExporter:
         if bpy.context.mode != 'OBJECT':
             self.reportError("Must be in Object Mode to export!")
             return False
+        
+        print("reading geometry {}".format(obj.name))
             
         bpy.ops.object.select_all(action='DESELECT')
         
@@ -111,7 +113,8 @@ class LevelExporter:
         obj.layers[0] = True
         obj.select = True
         
-        # create duplicate (works by selection)
+        # create duplicate (works by selection (no, does not?))
+        bpy.context.scene.objects.active = obj
         bpy.ops.object.duplicate()
         dupObj = bpy.context.active_object
         
@@ -119,12 +122,18 @@ class LevelExporter:
         obj.hide = objHidden
         obj.layers[0] = objLayer0
         
+        # apply modifiers
+        modifiers = dupObj.modifiers[:]
+        for modifier in modifiers:
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+        del modifiers
+        
         # enter edit mode
         bpy.ops.object.editmode_toggle()
         mesh = obj.data
         
         # Enter face selection mode
-        #todo
+        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
         
         # triangulate
         bpy.ops.mesh.select_all(action='SELECT')
@@ -132,33 +141,35 @@ class LevelExporter:
         bpy.ops.mesh.select_all(action='DESELECT')
         
         # we're about to create lots of objects - we won't be able to tell which unless we remember the previous ones.
-        prevObjs = bpy.objects[:]
+        prevObjs = {obj for obj in bpy.context.scene.objects}
         
         # go through material slots
         # but caution: materials may be used multiple times!
-        processedMaterials = []
-        for materialIndex, material in enumerate(obj.material_slots):
+        processedMaterials = set()
+        for materialIndex, material in enumerate(dupObj.material_slots):
             # only process each material once (may be in multiple slots)
             if material not in processedMaterials:
                 # select all slots with this material
-                for materialIndex2 in range(materialIndex, len(obj.material_slots)):
-                    material2 = obj.material_slots[materialIndex2]
+                for materialIndex2 in range(materialIndex, len(dupObj.material_slots)):
+                    material2 = dupObj.material_slots[materialIndex2]
                     if material2 == material:
-                        obj.active_material_index = materialIndex
+                        dupObj.active_material_index = materialIndex
                         bpy.ops.object.material_slot_select()
                 # separate these
                 bpy.ops.mesh.separate()
                 
-                processedMaterials.append(material)
+                processedMaterials.add(material)
+        del processedMaterials
         
-        newObjs = bpy.objects[:]
-        for oldObj in prevObjs:
-            newObjs.remove(oldObj)
+        newObjs = {obj for obj in bpy.context.scene.objects}.difference(prevObjs)
         del prevObjs
         
         # delete object
         bpy.ops.object.editmode_toggle()
         bpy.ops.object.delete()
+        
+        for obj in newObjs:
+            print("Created new object {}.".format(obj.name))
         
         # process new material separated objects (newObjs)
         #todo
