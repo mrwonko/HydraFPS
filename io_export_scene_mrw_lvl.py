@@ -91,6 +91,71 @@ class Surface:
         for tri in self.tris:
             file.write(struct.pack("3H", tri[0], tri[1], tri[2]))
 
+# previous state: object mode enabled, nothing selected
+# creates an unhidden duplicate of the supplied object on layer 0
+# all the duplicate's modifiers get applied, editmode is enabled and all faces are unhidden and triangulated.
+def createSimplifiedCopy(obj):
+    # select object, making sure its visible and on the correct layer
+    objHidden = obj.hide
+    objLayer0 = obj.layers[0]
+    obj.hide = False
+    obj.layers[0] = True
+    obj.select = True
+    
+    # create duplicate (works by selection (no, does not? I get context errors if I don't set the active object))
+    bpy.context.scene.objects.active = obj
+    bpy.ops.object.duplicate()
+    dupObj = bpy.context.active_object
+    
+    # restore previous object state
+    obj.hide = objHidden
+    obj.layers[0] = objLayer0
+    
+    # apply modifiers
+    modifiers = dupObj.modifiers[:]
+    for modifier in modifiers:
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+    del modifiers
+    
+    # enter edit mode
+    bpy.ops.object.editmode_toggle()
+    
+    # Enter face selection mode
+    bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+    
+    # unhide all
+    bpy.ops.mesh.reveal()
+    
+    # triangulate
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.quads_convert_to_tris()
+    bpy.ops.mesh.select_all(action='DESELECT')
+    
+    return dupObj
+
+# previous state: in editmode of mesh object obj with nothing selected
+# separates each material into a new object/mesh
+# returns created objects
+def separateByMaterial(obj): 
+    prevObjs = {obj for obj in bpy.context.scene.objects}
+    # go through material slots
+    # but caution: materials may be used multiple times!
+    processedMaterials = set()
+    for materialIndex, material in enumerate(obj.material_slots):
+        # only process each material once (may be in multiple slots)
+        if material not in processedMaterials:
+            # select all slots with this material
+            for materialIndex2 in range(materialIndex, len(obj.material_slots)):
+                material2 = obj.material_slots[materialIndex2]
+                if material2 == material:
+                    obj.active_material_index = materialIndex
+                    bpy.ops.object.material_slot_select()
+            # separate these
+            bpy.ops.mesh.separate()
+            
+            processedMaterials.add(material)
+    return {obj for obj in bpy.context.scene.objects}.difference(prevObjs)
+
 class LevelExporter:
     def __init__(self, errorFunc):
         self.reportError = errorFunc
@@ -138,69 +203,17 @@ class LevelExporter:
             self.reportError("Must be in Object Mode to export!")
             return False
         
-        print("reading geometry {}".format(obj.name))
+        print("Processing geometry object \"{}\"...".format(obj.name))
             
         bpy.ops.object.select_all(action='DESELECT')
         
-        # select object, making sure its visible and on the correct layer
-        objHidden = obj.hide
-        objLayer0 = obj.layers[0]
-        obj.hide = False
-        obj.layers[0] = True
-        obj.select = True
+        dupObj = createSimplifiedCopy(obj)
         
-        # create duplicate (works by selection (no, does not? I get context errors if I don't set the active object))
-        bpy.context.scene.objects.active = obj
-        bpy.ops.object.duplicate()
-        dupObj = bpy.context.active_object
+        # we're now in editmode of a triangulated copy of the object
         
-        # restore previous object state
-        obj.hide = objHidden
-        obj.layers[0] = objLayer0
+        # we're about to create lots of objects by splitting by material - we won't be able to tell which are new unless we remember the previous ones.
         
-        # apply modifiers
-        modifiers = dupObj.modifiers[:]
-        for modifier in modifiers:
-            bpy.ops.object.modifier_apply(modifier=modifier.name)
-        del modifiers
-        
-        # enter edit mode
-        bpy.ops.object.editmode_toggle()
-        
-        # Enter face selection mode
-        bpy.context.tool_settings.mesh_select_mode = (False, False, True)
-        
-        # unhide all
-        bpy.ops.mesh.reveal()
-        
-        # triangulate
-        bpy.ops.mesh.select_all(action='SELECT')
-        bpy.ops.mesh.quads_convert_to_tris()
-        bpy.ops.mesh.select_all(action='DESELECT')
-        
-        # we're about to create lots of objects - we won't be able to tell which unless we remember the previous ones.
-        prevObjs = {obj for obj in bpy.context.scene.objects}
-        
-        # go through material slots
-        # but caution: materials may be used multiple times!
-        processedMaterials = set()
-        for materialIndex, material in enumerate(dupObj.material_slots):
-            # only process each material once (may be in multiple slots)
-            if material not in processedMaterials:
-                # select all slots with this material
-                for materialIndex2 in range(materialIndex, len(dupObj.material_slots)):
-                    material2 = dupObj.material_slots[materialIndex2]
-                    if material2 == material:
-                        dupObj.active_material_index = materialIndex
-                        bpy.ops.object.material_slot_select()
-                # separate these
-                bpy.ops.mesh.separate()
-                
-                processedMaterials.add(material)
-        del processedMaterials
-        
-        newObjs = {obj for obj in bpy.context.scene.objects}.difference(prevObjs)
-        del prevObjs
+        newObjs = separateByMaterial(dupObj)
         
         # delete object
         bpy.ops.object.editmode_toggle()
@@ -270,7 +283,7 @@ class LevelExporter:
         # warn about nonsensical invisible & nonsolid combination - but only once per object
         if flags & SurfaceFlags.Invisible and ~flags & SurfaceFlags.Solid:
             if obj.name not in self.invNonsolidWarned:
-                self.invNonsolidWarned |= {obj.name}
+                self.invNonsolidWarned.add(obj.name)
                 print("Warning: invisible nonsolid object \"{}\"!".format(obj.name))
         
         # append surface to list of surfaces with this material (for potential combination)
