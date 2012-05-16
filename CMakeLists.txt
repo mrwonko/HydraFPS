@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 2.6)
 # I force CMAKE_ROOT/Modules into the module search path because it's missing in my cmake at uni - maybe that's a local problem though?
 #set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMakeModules" ${CMAKE_MODULE_PATH} "${CMAKE_ROOT}/Modules")
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMakeModules" ${CMAKE_MODULE_PATH})
-
+message(${CMAKE_ROOT})
 project("Hydra FPS")
 
 
@@ -23,6 +23,17 @@ endif(${OPENGL_INCLUDE_DIR})
 set(LIBRARIES
 	${OPENGL_gl_LIBRARY}
 	${OPENGL_glu_LIBRARY}
+	)
+
+# add GLEW (required on linux when linking SFML statically - and I'll eventually use it myself.)
+find_package(GLEW)
+if(NOT GLEW_FOUND)
+	message(FATAL_ERROR "GLEW not found!")
+endif(NOT GLEW_FOUND)
+include_directories("${GLEW_INCLUDE_PATH}")
+set(LIBRARIES
+	${LIBRARIES}
+	${GLEW_LIBRARY}
 	)
 
 # add Bullet
@@ -45,16 +56,23 @@ include_directories(${BULLET_INCLUDE_DIRS})
 # add Sixense SDK
 find_package(Sixense REQUIRED)
 include_directories(${SIXENSE_INCLUDE_DIR})
-set(LIBRARIES
-	${LIBRARIES}
-	${SIXENSE_LIBRARY_DYNAMIC}
-	)
+if(SIXENSE_LIBRARY_DYNAMIC)
+	set(LIBRARIES
+		${LIBRARIES}
+		${SIXENSE_LIBRARY_DYNAMIC}
+		)
+else(SIXENSE_LIBRARY_DYNAMIC)
+	set(LIBRARIES
+		${LIBRARIES}
+		${SIXENSE_LIBRARY_STATIC}
+		)
+
+endif(SIXENSE_LIBRARY_DYNAMIC)
 
 # add SFML
-set(SFML_STATIC_LIBRARIES TRUE)
+# set(SFML_STATIC_LIBRARIES TRUE)  # only makes trouble on linux
 find_package(SFML 2 REQUIRED system window graphics audio)
 include_directories("${SFML_INCLUDE_DIR}")
-add_definitions(-DSFML_DYNAMIC) # this may be outdated? there's SFML_STATIC, this may be assumed otherwise...
 if(${CMAKE_BUILD_TYPE} MATCHES Debug)
 	# add debug libs
 	set(LIBRARIES
