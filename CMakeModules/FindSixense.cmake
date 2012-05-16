@@ -43,17 +43,18 @@ find_library(SIXENSE_LIBRARY_DYNAMIC sixense
 	PATH_SUFFIXES
 		"lib"
 		"lib/win32/release_dll"
+		"lib/linux/release"
 	PATHS
 		${SIXENSE_POSSIBLE_PATHS}
 	)
 
-if ((NOT SIXENSE_INCLUDE_DIR) OR (NOT SIXENSE_LIBRARY_STATIC) OR (NOT SIXENSE_LIBRARY_DYNAMIC))
+if ((NOT SIXENSE_INCLUDE_DIR) OR ((NOT SIXENSE_LIBRARY_STATIC) AND (NOT SIXENSE_LIBRARY_DYNAMIC)))
     if(Sixense_FIND_REQUIRED) #prefix is filename, case matters
         message(FATAL_ERROR "Could not find Sixense SDK!")
     elseif(NOT Sixense_FIND_QUIETLY)
         message("Could not find Sixense SDK!")
     endif(Sixense_FIND_REQUIRED)
-endif ((NOT SIXENSE_INCLUDE_DIR) OR (NOT SIXENSE_LIBRARY_STATIC) OR (NOT SIXENSE_LIBRARY_DYNAMIC))
+endif ((NOT SIXENSE_INCLUDE_DIR) OR ((NOT SIXENSE_LIBRARY_STATIC) AND (NOT SIXENSE_LIBRARY_DYNAMIC)))
 
 if (NOT Sixense_FIND_QUIETLY)
 	message("Found Sixense SDK: ${SIXENSE_INCLUDE_DIR}")
